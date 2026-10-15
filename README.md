@@ -226,6 +226,93 @@ See [Domain Management Guide](docs/06-DEVELOPMENT/DOMAIN_MANAGEMENT.md) for deta
 
 ---
 
+## Cómo levantar el banco 
+
+Guía paso a paso para ejecutar la plataforma en tu máquina local.
+
+### Requisitos
+
+- PHP 8.4+ y Composer
+- Node.js 18+ y npm
+- MySQL 8.0+ / MariaDB 10.3+ (o PostgreSQL 13+)
+- Redis 6.0+ (opcional en modo demo)
+
+### 1. Instalar dependencias
+
+```bash
+composer install
+npm install
+```
+
+### 2. Configurar el entorno
+
+```bash
+cp .env.example .env
+# o, para probar rápido sin servicios externos (bancos, KYC y blockchain simulados):
+cp .env.demo .env
+php artisan key:generate
+```
+
+### 3. Crear la base de datos
+
+Crea la base de datos y ajusta `DB_DATABASE`, `DB_USERNAME` y `DB_PASSWORD` en el `.env`:
+
+```bash
+mysql -u root -e "CREATE DATABASE finaegis"
+```
+
+### 4. Migrar y poblar la base de datos
+
+```bash
+php artisan migrate:fresh --seed
+```
+
+### 5. Levantar el servidor
+
+En dos terminales:
+
+```bash
+# Terminal 1 — servidor web
+php artisan serve
+
+# Terminal 2 — Vite (frontend)
+npm run dev
+```
+
+Opcional pero recomendado, worker de colas (procesa eventos y workflows):
+
+```bash
+php artisan queue:work --queue=events,ledger,transactions,transfers,webhooks
+```
+
+### 6. Acceder
+
+- App: `http://localhost:8000`
+- Panel admin: `http://localhost:8000/admin`
+- Documentación API: `http://localhost:8000/api/documentation` (generar antes con `php artisan l5-swagger:generate`)
+
+Credenciales demo:
+
+- `demo.user@gcu.global` / `demo123`
+- `demo.business@gcu.global` / `demo123`
+- `demo.investor@gcu.global` / `demo123`
+
+### Opción con Docker
+
+Si prefieres no instalar MySQL/Redis en tu máquina (incluye MySQL, Redis y Mailpit):
+
+```bash
+docker compose up --build
+# en otra terminal, aplica migraciones y seed:
+docker compose exec app php artisan migrate --seed
+```
+
+- App: `http://localhost:8000`
+- MySQL expuesto en el puerto `3307` (usuario `finaegis`, contraseña `secret`)
+- Mailpit (correos capturados): `http://localhost:8025`
+
+---
+
 ## Platform Capabilities
 
 ### Core Banking
