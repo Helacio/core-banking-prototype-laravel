@@ -21,6 +21,8 @@ return [
         'auto_approve'         => env('DEMO_AUTO_APPROVE', true),
     ],
 
+    'debug' => env('DEMO_DEBUG', false),
+
     /*
     |--------------------------------------------------------------------------
     | UI Indicators

@@ -25,7 +25,7 @@ RUN composer install \
 COPY . .
 
 # Generate optimized autoloader (skip scripts to avoid artisan commands without APP_KEY)
-RUN composer dump-autoload --optimize --no-dev --classmap-authoritative --no-scripts
+RUN composer dump-autoload --optimize --no-dev --no-scripts
 
 # ----------------------------------------------------------------------------
 # Stage 2: Node.js - Build frontend assets
@@ -144,6 +144,9 @@ WORKDIR /var/www/html
 COPY --from=composer /app/vendor ./vendor
 COPY --from=node /app/public/build ./public/build
 COPY . .
+
+# Case-insensitive dev folder ("API") vs PSR-4 namespace ("Api") compatibility on Linux
+RUN ln -sfn /var/www/html/app/Http/Controllers/API /var/www/html/app/Http/Controllers/Api
 
 # Set proper permissions
 RUN chown -R www-data:www-data /var/www/html \
