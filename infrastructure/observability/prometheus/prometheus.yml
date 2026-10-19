@@ -1,0 +1,25 @@
+# FinAegis Core Banking - Prometheus configuration
+# Scrapes business/HTTP metrics exposed by the app at /api/monitoring/prometheus
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/alerting_rules.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: finaegis-app
+    metrics_path: /api/monitoring/prometheus
+    authorization:
+      type: Bearer
+      credentials: demo-metrics-token
+    static_configs:
+      - targets: ["app:80"]
+        labels:
+          environment: demo
+          instance: finaegis-app

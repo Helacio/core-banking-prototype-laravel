@@ -1,72 +1,50 @@
 # FinAegis Alerting Rules
-# Reference: VERSION_ROADMAP.md v1.2.0 Production Readiness
+# Aligned with the metrics actually exported by PrometheusExporter
+# (http_requests_by_status_total, http_request_duration_seconds_sum/_count,
+#  finaegis_transactions_total, infra_*).
+# See infrastructure/observability/prometheus/prometheus.yml
 
 groups:
-  # Critical Alerts - Require immediate response
+  # Critical alerts - require immediate response
   - name: finaegis_critical
     interval: 30s
     rules:
-      - alert: TransactionSettlementFailures
-        expr: rate(transaction_settlement_failures_total[5m]) > 0.1
-        for: 1m
+      - alert: TransactionFailureRateHigh
+        expr: sum(rate(finaegis_transactions_total{status="failed"}[5m])) / sum(rate(finaegis_transactions_total[5m])) > 0.2
+        for: 2m
         labels:
           severity: critical
           team: platform
         annotations:
-          summary: "High rate of transaction settlement failures"
-          description: "Transaction settlement failure rate is {{ $value | humanize }}/s (threshold: 0.1/s)"
-          runbook_url: "https://docs.finaegis.io/runbooks/transaction-settlement"
+          summary: "High rate of failed business transactions"
+          description: "Transaction failure rate is {{ $value | humanizePercentage }} (threshold: 20%)"
 
-      - alert: ComplianceCheckTimeout
-        expr: histogram_quantile(0.99, rate(compliance_check_duration_seconds_bucket[5m])) > 30
-        for: 2m
+      - alert: NoTransactionsAtAll
+        expr: sum(rate(finaegis_transactions_total[10m])) == 0
+        for: 10m
         labels:
           severity: critical
-          team: compliance
+          team: platform
         annotations:
-          summary: "Compliance checks timing out"
-          description: "p99 compliance check latency is {{ $value | humanizeSeconds }} (threshold: 30s)"
-          runbook_url: "https://docs.finaegis.io/runbooks/compliance-timeout"
-
-      - alert: NAVCalculationDeviation
-        expr: abs(treasury_nav_deviation) > 0.001
-        for: 1m
-        labels:
-          severity: critical
-          team: treasury
-        annotations:
-          summary: "NAV calculation deviation exceeds 0.1%"
-          description: "NAV deviation is {{ $value | humanizePercentage }} (threshold: 0.1%)"
-          runbook_url: "https://docs.finaegis.io/runbooks/nav-deviation"
-
-      - alert: DatabaseReplicationLag
-        expr: pg_replication_lag_seconds > 5
-        for: 1m
-        labels:
-          severity: critical
-          team: infrastructure
-        annotations:
-          summary: "Database replication lag exceeds 5 seconds"
-          description: "Replication lag is {{ $value | humanizeSeconds }}"
-          runbook_url: "https://docs.finaegis.io/runbooks/db-replication"
+          summary: "No business transactions processed in the last 10 minutes"
+          description: "The core stopped processing money-moving operations."
 
       - alert: QueueBacklogCritical
-        expr: sum(horizon_jobs_pending) > 10000
+        expr: infra_queue_size > 1000
         for: 2m
         labels:
           severity: critical
           team: platform
         annotations:
-          summary: "Queue backlog exceeds 10,000 items"
+          summary: "Queue backlog exceeds 1,000 jobs"
           description: "Current queue depth: {{ $value | humanize }} jobs"
-          runbook_url: "https://docs.finaegis.io/runbooks/queue-backlog"
 
-  # Warning Alerts - Require attention
+  # Warning alerts - require attention
   - name: finaegis_warning
     interval: 1m
     rules:
       - alert: APIErrorRateHigh
-        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.01
+        expr: sum(rate(http_requests_by_status_total{status=~"5.."}[5m])) / sum(rate(http_requests_by_status_total[5m])) > 0.01
         for: 5m
         labels:
           severity: warning
@@ -75,168 +53,22 @@ groups:
           summary: "API error rate exceeds 1%"
           description: "Current error rate: {{ $value | humanizePercentage }}"
 
-      - alert: ResponseTimeP99High
-        expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 2
+      - alert: AverageLatencyHigh
+        expr: sum(rate(http_request_duration_seconds_sum[5m])) / sum(rate(http_request_duration_seconds_count[5m])) > 1
         for: 5m
         labels:
           severity: warning
           team: platform
         annotations:
-          summary: "API response time p99 exceeds 2 seconds"
-          description: "Current p99 latency: {{ $value | humanizeSeconds }}"
+          summary: "Average API latency exceeds 1 second"
+          description: "Current average latency: {{ $value | humanizeDuration }}"
 
-      - alert: CacheHitRateLow
-        expr: rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_total[5m])) < 0.8
-        for: 10m
+      - alert: FailedJobsIncreasing
+        expr: increase(infra_queue_failed_total[1h]) > 5
+        for: 5m
         labels:
           severity: warning
           team: platform
         annotations:
-          summary: "Cache hit rate below 80%"
-          description: "Current cache hit rate: {{ $value | humanizePercentage }}"
-
-      - alert: DiskUsageHigh
-        expr: (node_filesystem_size_bytes - node_filesystem_avail_bytes) / node_filesystem_size_bytes > 0.8
-        for: 5m
-        labels:
-          severity: warning
-          team: infrastructure
-        annotations:
-          summary: "Disk usage exceeds 80%"
-          description: "Current disk usage: {{ $value | humanizePercentage }}"
-
-      - alert: MemoryUsageHigh
-        expr: process_resident_memory_bytes / node_memory_MemTotal_bytes > 0.85
-        for: 5m
-        labels:
-          severity: warning
-          team: infrastructure
-        annotations:
-          summary: "Memory usage exceeds 85%"
-          description: "Current memory usage: {{ $value | humanizePercentage }}"
-
-  # Domain-specific alerts
-  - name: finaegis_exchange
-    interval: 30s
-    rules:
-      - alert: OrderMatchingLatencyHigh
-        expr: histogram_quantile(0.99, rate(exchange_order_matching_duration_seconds_bucket[5m])) > 0.5
-        for: 2m
-        labels:
-          severity: warning
-          team: exchange
-        annotations:
-          summary: "Order matching latency exceeds 500ms"
-          description: "p99 matching latency: {{ $value | humanizeSeconds }}"
-
-      - alert: LiquidityPoolDepletedCritical
-        expr: exchange_liquidity_pool_tvl < 10000
-        for: 1m
-        labels:
-          severity: critical
-          team: exchange
-        annotations:
-          summary: "Liquidity pool TVL critically low"
-          description: "Pool {{ $labels.pool }} TVL: ${{ $value | humanize }}"
-
-  - name: finaegis_compliance
-    interval: 1m
-    rules:
-      - alert: OpenComplianceAlertsHigh
-        expr: compliance_alerts_open_total{severity="critical"} > 5
-        for: 5m
-        labels:
-          severity: warning
-          team: compliance
-        annotations:
-          summary: "More than 5 critical compliance alerts open"
-          description: "Open critical alerts: {{ $value | humanize }}"
-
-      - alert: KYCVerificationFailureRateHigh
-        expr: rate(compliance_kyc_verifications_total{status="rejected"}[1h]) / rate(compliance_kyc_verifications_total[1h]) > 0.3
-        for: 10m
-        labels:
-          severity: warning
-          team: compliance
-        annotations:
-          summary: "KYC rejection rate exceeds 30%"
-          description: "Current rejection rate: {{ $value | humanizePercentage }}"
-
-      - alert: EDDWorkflowsBacklogged
-        expr: compliance_edd_workflows_active > 50
-        for: 5m
-        labels:
-          severity: warning
-          team: compliance
-        annotations:
-          summary: "More than 50 active EDD workflows"
-          description: "Active EDD workflows: {{ $value | humanize }}"
-
-  - name: finaegis_agent_protocol
-    interval: 30s
-    rules:
-      - alert: AgentTransactionFailureRateHigh
-        expr: rate(agent_protocol_transactions_total{status="failed"}[5m]) / rate(agent_protocol_transactions_total[5m]) > 0.05
-        for: 5m
-        labels:
-          severity: warning
-          team: agent-protocol
-        annotations:
-          summary: "Agent transaction failure rate exceeds 5%"
-          description: "Current failure rate: {{ $value | humanizePercentage }}"
-
-      - alert: EscrowTimeoutImminent
-        expr: agent_protocol_escrow_expires_in_seconds < 3600
-        for: 5m
-        labels:
-          severity: warning
-          team: agent-protocol
-        annotations:
-          summary: "Escrow expiring within 1 hour"
-          description: "Escrow {{ $labels.escrow_id }} expires in {{ $value | humanizeSeconds }}"
-
-  - name: finaegis_treasury
-    interval: 1m
-    rules:
-      - alert: PortfolioRebalancingRequired
-        expr: treasury_portfolio_drift > 0.05
-        for: 5m
-        labels:
-          severity: warning
-          team: treasury
-        annotations:
-          summary: "Portfolio drift exceeds 5%"
-          description: "Portfolio {{ $labels.portfolio }} drift: {{ $value | humanizePercentage }}"
-
-      - alert: YieldOptimizationFailed
-        expr: increase(treasury_optimization_failures_total[1h]) > 3
-        for: 5m
-        labels:
-          severity: warning
-          team: treasury
-        annotations:
-          summary: "Multiple yield optimization failures in the last hour"
-          description: "Failed optimizations: {{ $value | humanize }}"
-
-  - name: finaegis_lending
-    interval: 1m
-    rules:
-      - alert: LoanDisbursementFailureHigh
-        expr: rate(lending_disbursement_failures_total[5m]) > 0.05
-        for: 5m
-        labels:
-          severity: warning
-          team: lending
-        annotations:
-          summary: "Loan disbursement failure rate is elevated"
-          description: "Failure rate: {{ $value | humanize }}/s"
-
-      - alert: OverdueLoansIncreasing
-        expr: delta(lending_loans_overdue_total[1h]) > 10
-        for: 10m
-        labels:
-          severity: warning
-          team: lending
-        annotations:
-          summary: "Overdue loans count increasing rapidly"
-          description: "Increase in last hour: {{ $value | humanize }} loans"
+          summary: "More than 5 failed queue jobs in the last hour"
+          description: "Failed jobs increase: {{ $value | humanize }}"
