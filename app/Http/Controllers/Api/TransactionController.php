@@ -74,7 +74,7 @@ class TransactionController extends Controller
         $account = Account::where('uuid', $uuid)->firstOrFail();
 
         // Check if user owns this account
-        if ($account->user_uuid !== auth()->user()->uuid) {
+        if ($account->user_uuid !== $request->user()->uuid) {
             return response()->json(
                 [
                     'message' => 'Access denied to this account',
@@ -169,7 +169,7 @@ class TransactionController extends Controller
         $account = Account::where('uuid', $uuid)->firstOrFail();
 
         // Check if user owns this account
-        if ($account->user_uuid !== auth()->user()->uuid) {
+        if ($account->user_uuid !== $request->user()->uuid) {
             return response()->json(
                 [
                     'message' => 'Access denied to this account',
