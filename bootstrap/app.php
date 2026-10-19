@@ -167,6 +167,10 @@ return Application::configure(basePath: is_string($_appBasePath) ? $_appBasePath
         // Append SecurityHeaders globally to ensure all requests have security headers
         $middleware->append(App\Http\Middleware\SecurityHeaders::class);
 
+        // Observability: count every PHP request (including unmatched 404 routes)
+        // per entry channel. Runs globally to also cover non-grouped requests.
+        $middleware->append(App\Http\Middleware\MetricsMiddleware::class);
+
         // Apply middleware to API routes (no global throttling - use custom rate limiting)
         $middleware->group('api', [
             App\Http\Middleware\IpBlocking::class,
@@ -178,7 +182,6 @@ return Application::configure(basePath: is_string($_appBasePath) ? $_appBasePath
             App\Http\Middleware\EnforceMethodScope::class,
             // Observability middleware stack (v5.10.0)
             App\Http\Middleware\StructuredLoggingMiddleware::class,
-            App\Http\Middleware\MetricsMiddleware::class,
             App\Http\Middleware\QueryPerformanceMiddleware::class,
             App\Http\Middleware\CachePerformance::class,
             App\Http\Middleware\TracingMiddleware::class,

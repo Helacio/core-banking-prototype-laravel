@@ -9,6 +9,20 @@ use Illuminate\Support\Facades\Cache;
 class MetricsCollector
 {
     /**
+     * HTTP status codes exported to Prometheus.
+     *
+     * @var list<int>
+     */
+    public const STATUS_CODES = [200, 201, 202, 204, 400, 401, 403, 404, 422, 429, 500, 502, 503];
+
+    /**
+     * HTTP methods exported to Prometheus.
+     *
+     * @var list<string>
+     */
+    public const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+
+    /**
      * Record an HTTP request metric.
      */
     public function recordHttpRequest(string $method, string $path, int $statusCode, float $duration): void
@@ -24,6 +38,55 @@ class MetricsCollector
         } elseif ($statusCode >= 400) {
             $this->increment('metrics:http:requests:errors');
         }
+    }
+
+    /**
+     * Record an HTTP request attributed to an entry channel (api, agent, graphql, web...).
+     */
+    public function recordChannelRequest(string $channel, int $statusCode): void
+    {
+        $channel = $this->sanitizeLabel($channel);
+
+        $this->increment("metrics:http:channel:{$channel}:requests");
+        $this->increment("metrics:http:channel:{$channel}:status:{$statusCode}");
+        $this->registerIn('metrics:http:channels:registered', $channel);
+    }
+
+    /**
+     * Record a business transaction attributed to an entry channel.
+     */
+    public function recordTransaction(string $channel, string $type, int $statusCode): void
+    {
+        $channel = $this->sanitizeLabel($channel);
+        $type    = $this->sanitizeLabel($type);
+        $status  = $statusCode >= 200 && $statusCode < 300 ? 'completed' : 'failed';
+
+        $this->increment("metrics:transactions:{$channel}:{$type}:{$status}");
+        $this->registerIn('metrics:transactions:registered', "{$channel}|{$type}|{$status}");
+    }
+
+    /**
+     * Channels seen by the HTTP channel counter.
+     *
+     * @return list<string>
+     */
+    public function registeredChannels(): array
+    {
+        $registered = Cache::get('metrics:http:channels:registered', []);
+
+        return is_array($registered) ? array_values($registered) : [];
+    }
+
+    /**
+     * Registered transaction series in "channel|type|status" format.
+     *
+     * @return list<string>
+     */
+    public function registeredTransactionSeries(): array
+    {
+        $registered = Cache::get('metrics:transactions:registered', []);
+
+        return is_array($registered) ? array_values($registered) : [];
     }
 
     /**
@@ -96,6 +159,35 @@ class MetricsCollector
     {
         $current = (int) Cache::get($key, 0);
         Cache::put($key, (string) ($current + 1));
+    }
+
+    /**
+     * Register a value in a cache-backed registry list.
+     */
+    private function registerIn(string $registryKey, string $value): void
+    {
+        $registered = Cache::get($registryKey, []);
+
+        if (! is_array($registered)) {
+            $registered = [];
+        }
+
+        if (! in_array($value, $registered, true)) {
+            $registered[] = $value;
+            Cache::put($registryKey, $registered);
+        }
+    }
+
+    /**
+     * Sanitize a value so it is safe as a Prometheus label value.
+     */
+    private function sanitizeLabel(string $value): string
+    {
+        $value = strtolower(trim($value));
+        $value = preg_replace('/[^a-z0-9_-]/', '_', $value) ?? '';
+        $value = trim($value, '_');
+
+        return $value === '' ? 'unknown' : substr($value, 0, 32);
     }
 
     /**

@@ -11,6 +11,11 @@ use Illuminate\Support\Facades\DB;
 
 class PrometheusExporter
 {
+    public function __construct(
+        private readonly MetricsCollector $collector
+    ) {
+    }
+
     /**
      * Export metrics in Prometheus format.
      */
@@ -29,6 +34,10 @@ class PrometheusExporter
 
         // HTTP metrics
         $output .= $this->exportHttpMetrics();
+
+        // Channel and business transaction metrics
+        $output .= $this->exportChannelMetrics();
+        $output .= $this->exportTransactionMetrics();
 
         // Cache metrics
         $output .= $this->exportCacheMetrics();
@@ -169,6 +178,10 @@ class PrometheusExporter
 
     /**
      * Export HTTP metrics.
+     *
+     * Note: status and method breakdowns are separate metric families. Mixing
+     * label sets on the same family makes the whole scrape invalid for
+     * Prometheus ("inconsistent label cardinality").
      */
     private function exportHttpMetrics(): string
     {
@@ -180,26 +193,88 @@ class PrometheusExporter
         $output .= "http_requests_total {$requestsTotal}\n";
 
         // Status codes
-        foreach ([200, 201, 204, 400, 401, 403, 404, 422, 500, 503] as $status) {
-            $count = Cache::get("metrics:http:requests:status:{$status}", 0);
+        $output .= "# HELP http_requests_by_status_total Total HTTP requests by status code\n";
+        $output .= "# TYPE http_requests_by_status_total counter\n";
+        foreach (MetricsCollector::STATUS_CODES as $status) {
+            $count = (int) Cache::get("metrics:http:requests:status:{$status}", 0);
             if ($count > 0) {
-                $output .= "http_requests_total{status=\"{$status}\"} {$count}\n";
+                $output .= "http_requests_by_status_total{status=\"{$status}\"} {$count}\n";
             }
         }
 
         // HTTP methods
-        foreach (['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as $method) {
-            $count = Cache::get("metrics:http:methods:{$method}", 0);
+        $output .= "# HELP http_requests_by_method_total Total HTTP requests by method\n";
+        $output .= "# TYPE http_requests_by_method_total counter\n";
+        foreach (MetricsCollector::HTTP_METHODS as $method) {
+            $count = (int) Cache::get("metrics:http:methods:{$method}", 0);
             if ($count > 0) {
-                $output .= "http_requests_total{method=\"{$method}\"} {$count}\n";
+                $output .= "http_requests_by_method_total{method=\"{$method}\"} {$count}\n";
             }
         }
 
-        // Average duration
+        // Average duration (kept for backward compatibility)
         $avgDuration = Cache::get('metrics:http:duration:average', 0);
         $output .= "# HELP http_request_duration_seconds HTTP request duration in seconds\n";
         $output .= "# TYPE http_request_duration_seconds gauge\n";
         $output .= "http_request_duration_seconds {$avgDuration}\n";
+
+        // Sum and count allow computing windowed averages in Grafana:
+        // rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m])
+        $durationSum = (float) Cache::get('metrics:http:duration:average:sum', 0);
+        $durationCount = (int) Cache::get('metrics:http:duration:average:count', 0);
+        $output .= "# HELP http_request_duration_seconds_sum Total time spent processing HTTP requests in seconds\n";
+        $output .= "# TYPE http_request_duration_seconds_sum counter\n";
+        $output .= "http_request_duration_seconds_sum {$durationSum}\n";
+        $output .= "# HELP http_request_duration_seconds_count Total HTTP requests measured for duration\n";
+        $output .= "# TYPE http_request_duration_seconds_count counter\n";
+        $output .= "http_request_duration_seconds_count {$durationCount}\n";
+
+        return $output;
+    }
+
+    /**
+     * Export per-channel HTTP request metrics.
+     */
+    private function exportChannelMetrics(): string
+    {
+        $output = '';
+
+        $channels = $this->collector->registeredChannels();
+
+        $output .= "# HELP finaegis_http_requests_total HTTP requests by entry channel and status\n";
+        $output .= "# TYPE finaegis_http_requests_total counter\n";
+
+        foreach ($channels as $channel) {
+            foreach (MetricsCollector::STATUS_CODES as $status) {
+                $count = (int) Cache::get("metrics:http:channel:{$channel}:status:{$status}", 0);
+                if ($count > 0) {
+                    $output .= "finaegis_http_requests_total{channel=\"{$channel}\",status=\"{$status}\"} {$count}\n";
+                }
+            }
+        }
+
+        return $output;
+    }
+
+    /**
+     * Export business transaction metrics (money-moving operations).
+     */
+    private function exportTransactionMetrics(): string
+    {
+        $output = '';
+
+        $series = $this->collector->registeredTransactionSeries();
+
+        $output .= "# HELP finaegis_transactions_total Business transactions by channel, type and status\n";
+        $output .= "# TYPE finaegis_transactions_total counter\n";
+
+        foreach ($series as $entry) {
+            $parts = explode('|', $entry, 3);
+            [$channel, $type, $status] = array_pad($parts, 3, 'unknown');
+
+            $count = (int) Cache::get("metrics:transactions:{$channel}:{$type}:{$status}", 0);
+            $output .= "finaegis_transactions_total{channel=\"{$channel}\",type=\"{$type}\",status=\"{$status}\"} {$count}\n";
+        }
 
         return $output;
     }
